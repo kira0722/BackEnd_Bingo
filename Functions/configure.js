@@ -102,10 +102,7 @@ function verificarVictoria(jugador) {
   // Verificar las condiciones de victoria
   const pleno = marcado.length === 24; // Todas las celdas marcadas menos la "FREE"
 
-  const diagonal1 = ["B1", "I2", "N3", "G4", "O5"].every((pos) =>
-    marcado.includes(pos)
-  );
-  const diagonal2 = ["B5", "I4", "N3", "G2", "O1"].every((pos) =>
+  const diagonal = ["B5", "I4", "N3", "G2", "O1"].every((pos) =>
     marcado.includes(pos)
   );
 
@@ -128,15 +125,14 @@ function verificarVictoria(jugador) {
 
   console.log({
     pleno,
-    diagonal1,
-    diagonal2,
+    diagonal,
     horizontal,
     vertical,
     esquinas,
   });
 
   // Evaluar si alguna condición es verdadera
-  return pleno || diagonal1 || diagonal2 || horizontal || vertical || esquinas;
+  return pleno || diagonal || horizontal || vertical || esquinas;
 }
 
 function generarTarjeton() {

@@ -27,16 +27,15 @@ db.connect((err) => {
 const app = express();
 const PORT = 5000;
 
-// Middleware
 app.use(cors());
 app.use(express.json());
 
 const server = http.createServer(app);
 
-// Configurar Socket.IO
+// Configuracion del servidor con el frontend
 const io = new Server(server, {
   cors: {
-    origin: 'http://localhost:3000', // Dirección del frontend
+    origin: 'http://localhost:3000',
     methods: ['GET', 'POST'],
   },
 });

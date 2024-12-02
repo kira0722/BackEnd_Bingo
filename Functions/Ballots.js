@@ -19,8 +19,6 @@ function emitirBalotas(io) {
     const balota = balotas.find((b) => !balotasEmitidas.includes(b));
     if (balota) {
       balotasEmitidas.push(balota);
-      // console.log("Balota emitida:", balota);
-      // console.log("Balotas emitidas hasta ahora:", balotasEmitidas);
       io.emit("balotaNueva", balota);
     }
   }, 5000);
