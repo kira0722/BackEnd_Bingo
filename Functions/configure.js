@@ -1,123 +1,155 @@
-const mysql = require("mysql2");
 const jugadores = {};
 const balotasEmitidas = [];
-let juegoId = null;
 
-function configurarBingo(io, db) {
+function configurarBingo(io) {
   io.on("connection", (socket) => {
     console.log(`Jugador conectado: ${socket.id}`);
 
-    // Registrar un nuevo jugador
+    // Registrar a un nuevo jugador
     socket.on("unirseJuego", () => {
       const tarjeton = generarTarjeton();
       jugadores[socket.id] = { tarjeton, marcado: [] };
+      console.log(`Jugador registrado: ${socket.id}`, jugadores[socket.id]);
       socket.emit("tarjeton", tarjeton);
     });
 
-    // Iniciar un nuevo juego
-    socket.on("iniciarJuego", (nombreJuego) => {
-      const fechaInicio = new Date();
-      db.query(
-        "INSERT INTO Juegos (nombre, fecha_inicio) VALUES (?, ?)",
-        [nombreJuego, fechaInicio],
-        (err, results) => {
-          if (err) {
-            console.error("Error al crear el juego:", err);
-          } else {
-            juegoId = results.insertId;
-            console.log(`Juego iniciado: ID ${juegoId}`);
-            io.emit("juegoIniciado", { juegoId, nombreJuego });
-          }
-        }
-      );
-    });
-
-    // Cuando una balota es emitida
-    socket.on("emitirBalota", (balota) => {
-      balotasEmitidas.push(balota);
-      if (juegoId) {
-        db.query(
-          "INSERT INTO Balotas (juego_id, balota) VALUES (?, ?)",
-          [juegoId, balota],
-          (err) => {
-            if (err) {
-              console.error("Error al guardar la balota:", err);
-            } else {
-              console.log(`Balota ${balota} guardada para el juego ${juegoId}`);
-            }
-          }
-        );
-      }
-      io.emit("nuevaBalota", balota);
-    });
-
     // Cuando un jugador marca una celda
-    socket.on("marcarCelda", ({ columna, fila }) => {
-      if (
-        jugadores[socket.id] &&
-        jugadores[socket.id].tarjeton[columna][fila] === balotasEmitidas[balotasEmitidas.length - 1]
-      ) {
-        jugadores[socket.id].marcado.push(`${columna}${fila + 1}`);
+    socket.on("marcarCelda", (celda) => {
+      const { columna, fila } = celda;
+      const numero = generarTarjeton()[columna][fila];
+
+      if (!numero) {
+        console.log(
+          `Intento de marcar celda inválida: columna ${columna}, fila ${fila}`
+        );
+        socket.emit("error", { message: "Celda inválida" });
+        return;
+      }
+
+      const celdaId = `${columna}${fila + 1}`;
+      const jugador = jugadores[socket.id];
+
+      if (!jugador) {
+        console.log(`Jugador no encontrado: ${socket.id}`);
+        return;
+      }
+
+      if (!jugador.marcado.includes(celdaId)) {
+        jugador.marcado.push(celdaId);
+        console.log(`Jugador ${socket.id} marcó la celda ${celdaId}`);
+        socket.emit("celdaMarcada", celdaId);
+      } else {
+        console.log(`La celda ${celdaId} ya ha sido marcada.`);
+        socket.emit("error", { message: "Esta celda ya ha sido marcada." });
       }
     });
 
     // Cuando un jugador presiona "BINGO"
     socket.on("bingo", () => {
       const jugador = jugadores[socket.id];
+      if (!jugador) {
+        socket.emit("resultado", {
+          ganador: null,
+          mensaje: "No estás registrado en el juego. Inicia Sesión",
+        });
+        return;
+      }
+
       if (verificarVictoria(jugador)) {
-        const modoVictoria = determinarModoVictoria(jugador);
-        db.query(
-          "INSERT INTO Ganadores (juego_id, jugador_id, modo_victoria) VALUES (?, ?, ?)",
-          [juegoId, socket.id, modoVictoria],
-          (err) => {
-            if (err) {
-              console.error("Error al registrar al ganador:", err);
-            } else {
-              console.log(`Ganador registrado: Jugador ${socket.id} con ${modoVictoria}`);
-              io.emit("resultado", { ganador: socket.id, mensaje: "¡BINGO! Tenemos un ganador.", modoVictoria });
-              reiniciarJuego();
-            }
-          }
-        );
+        io.emit("resultado", {
+          ganador: socket.id,
+          mensaje: "¡BINGO! 🥳🎉✨ Tenemos un ganador. 🎀",
+        });
+        reiniciarJuego();
       } else {
-        socket.emit("resultado", { ganador: null, mensaje: "Has sido descalificado." });
+        socket.emit("resultado", {
+          ganador: null,
+          mensaje: "Has sido descalificado. ☹️",
+        });
         socket.disconnect();
       }
     });
 
     // Desconectar al jugador
     socket.on("disconnect", () => {
-      delete jugadores[socket.id];
       console.log(`Jugador desconectado: ${socket.id}`);
+      delete jugadores[socket.id];
     });
   });
 }
 
 function reiniciarJuego() {
   balotasEmitidas.length = 0;
-  for (const jugador in jugadores) {
-    jugadores[jugador].marcado = [];
+  for (const jugadorId in jugadores) {
+    jugadores[jugadorId].marcado = [];
   }
+  console.log("Juego reiniciado. Estado de jugadores:", jugadores);
 }
 
 function verificarVictoria(jugador) {
+  if (!jugador || !jugador.marcado || !jugador.tarjeton) return false;
+
   const marcado = jugador.marcado;
-  const pleno = marcado.length === 24;
-  const diagonal = ['B5', 'I4', 'N3', 'G2', 'O1'].every((pos) => marcado.includes(pos));
-  const vertical = ['G5', 'G4', 'G3', 'G2', 'G1'].every((pos) => marcado.includes(pos));
-  const horizontal = ['B4', 'I4', 'N4', 'G4', 'O4'].every((pos) => marcado.includes(pos));
-  const esquinas = ['B1', 'B5', 'O1', 'O5'].every((pos) => marcado.includes(pos));
-  return pleno || diagonal || vertical || horizontal || esquinas;
+  const tarjeton = jugador.tarjeton;
+
+  // Considerar "FREE" como marcada
+  if (!marcado.includes("N3")) {
+    marcado.push("N3");
+  }
+
+  console.log("Celdas marcadas por el jugador:", marcado);
+
+  // Verificar las condiciones de victoria
+  const pleno = marcado.length === 24; // Todas las celdas marcadas menos la "FREE"
+
+  const diagonal1 = ["B1", "I2", "N3", "G4", "O5"].every((pos) =>
+    marcado.includes(pos)
+  );
+  const diagonal2 = ["B5", "I4", "N3", "G2", "O1"].every((pos) =>
+    marcado.includes(pos)
+  );
+
+  // Verificar horizontal: fila por fila
+  const horizontal = Array.from({ length: 5 }).some((_, fila) =>
+    ["B", "I", "N", "G", "O"].every((columna) =>
+      marcado.includes(`${columna}${fila + 1}`)
+    )
+  );
+
+  const vertical = ["B", "I", "N", "G", "O"].some((columna) =>
+    tarjeton[columna].every((_, fila) =>
+      marcado.includes(`${columna}${fila + 1}`)
+    )
+  );
+
+  const esquinas = ["B1", "B5", "O1", "O5"].every((pos) =>
+    marcado.includes(pos)
+  );
+
+  console.log({
+    pleno,
+    diagonal1,
+    diagonal2,
+    horizontal,
+    vertical,
+    esquinas,
+  });
+
+  // Evaluar si alguna condición es verdadera
+  return pleno || diagonal1 || diagonal2 || horizontal || vertical || esquinas;
 }
 
-function determinarModoVictoria(jugador) {
-  const marcado = jugador.marcado;
-  if (marcado.length === 24) return "Cartón Pleno";
-  if (['B5', 'I4', 'N3', 'G2', 'O1'].every((pos) => marcado.includes(pos))) return "Diagonal";
-  if (['G5', 'G4', 'G3', 'G2', 'G1'].every((pos) => marcado.includes(pos))) return "Vertical";
-  if (['B4', 'I4', 'N4', 'G4', 'O4'].every((pos) => marcado.includes(pos))) return "Horizontal";
-  if (['B1', 'B5', 'O1', 'O5'].every((pos) => marcado.includes(pos))) return "Esquinas";
-  return null;
+function generarTarjeton() {
+  const tarjeton = { B: [], I: [], N: [], G: [], O: [] };
+  for (let i = 0; i < 5; i++) {
+    tarjeton.B.push(Math.floor(Math.random() * 15) + 1);
+    tarjeton.I.push(Math.floor(Math.random() * 15) + 16);
+    tarjeton.N.push(i === 2 ? "FREE" : Math.floor(Math.random() * 15) + 31);
+    tarjeton.G.push(Math.floor(Math.random() * 15) + 46);
+    tarjeton.O.push(Math.floor(Math.random() * 15) + 61);
+  }
+  console.log("Tarjetón generado:", tarjeton); // Verifica el formato
+  return tarjeton;
 }
 
 module.exports = configurarBingo;
